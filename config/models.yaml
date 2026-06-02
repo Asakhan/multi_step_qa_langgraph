@@ -1,0 +1,58 @@
+# 구조(S0~S4) 노드 → 논리 모델 키 매핑, 그리고 논리 모델 키 → (env 변수, 단가 키, provider) 매핑.
+# 모델 문자열·단가는 코드에 하드코딩하지 않는다.
+#   - 실제 API 모델 문자열: .env 의 MODEL_* (models[].env 가 가리키는 변수)
+#   - 단가: config/pricing.yaml (models[].pricing 키로 참조)
+#   - provider: 호출 시 어떤 SDK/LangChain 통합을 쓸지 결정 (google | openai | anthropic)
+
+# 논리 모델 키 정의
+models:
+  gemini_flash:
+    env: MODEL_GEMINI_FLASH       # 기본값 gemini-2.5-flash
+    pricing: gemini-2.5-flash
+    provider: google
+  gemini_pro:
+    env: MODEL_GEMINI_PRO         # 기본값 gemini-3.1-pro
+    pricing: gemini-3.1-pro
+    provider: google
+  gpt4o_mini:
+    env: MODEL_GPT4O_MINI         # 기본값 gpt-4o-mini
+    pricing: gpt-4o-mini
+    provider: openai
+  claude_haiku:
+    env: MODEL_CLAUDE_HAIKU       # 기본값 claude-haiku-4.5
+    pricing: claude-haiku-4.5
+    provider: anthropic
+  o3:
+    env: MODEL_O3                 # 기본값 o3
+    pricing: o3
+    provider: openai
+  o4_mini:
+    env: MODEL_O4_MINI            # o4-mini (이전 S2 검증 후보)
+    pricing: o4-mini
+    provider: openai
+  claude_sonnet:
+    env: MODEL_CLAUDE_SONNET      # claude-sonnet-4-5 (현재 S2 검증 모델 — Anthropic, 대형컨텍스트 OK)
+    pricing: claude-sonnet-4-5
+    provider: anthropic
+
+# 구조별 노드 역할 → 논리 모델 키
+# (구조 간 차이는 그래프 구조에서 발생하며, 모델 배정만 여기서 통제)
+structures:
+  s0:
+    generate: gemini_flash
+  s1:
+    generate: gemini_pro          # S0과 동일 그래프, generate 모델만 교체
+  s2:
+    generate: gemini_flash
+    verify: claude_sonnet         # o3(TPM한도)→o4_mini(OpenAI quota)→claude_sonnet(Anthropic) 로 교체
+  s3:
+    gen_gemini: gemini_flash      # 다수결 tie 시 우선순위 = Executor(gemini_flash)
+    gen_gpt: gpt4o_mini
+    gen_claude: claude_haiku
+  s4:
+    decompose: gemini_flash
+    solve: gemini_flash
+    aggregate: gemini_flash
+
+# 다수결 tie-break 우선순위 (S3): 세 후보가 모두 다른 군집일 때 채택할 논리 모델 키
+s3_tiebreak_priority: gemini_flash

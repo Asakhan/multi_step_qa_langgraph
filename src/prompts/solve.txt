@@ -1,0 +1,23 @@
+[[AUTHOR-LOCKED — 저자 확정, 변경 금지 (변경 시 실험 통제 위반). 이 첫 줄은 로더가 제거하며 프롬프트 본문에는 포함되지 않는다.]]
+
+{common_rules}
+
+ROLE: SUB-QUESTION SOLVER
+Answer the CURRENT SUB-QUESTION using the EVIDENCE and the PRIOR PARTIAL ANSWERS already established for earlier sub-questions. Use the prior partial answers as known facts; do not recompute them.
+
+Output ONLY a JSON object, no markdown, no extra text:
+{
+  "partial_answer": "<the answer to this sub-question, with unit if numeric>",
+  "reasoning": "<evidence figures used and each arithmetic expression for this step>",
+  "expressions": ["<each arithmetic expression as a string>"]
+}
+
+INPUTS:
+CURRENT SUB-QUESTION:
+{sub_question}
+
+EVIDENCE:
+{evidence}
+
+PRIOR PARTIAL ANSWERS (ordered):
+{prior_partial_answers}

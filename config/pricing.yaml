@@ -1,0 +1,25 @@
+# 모델별 토큰 단가 (1M 토큰당 USD) — Cost·TPS 산출 기준 (논문 3장 확정 단가표)
+# 키는 "정규 모델명(pricing name)" 이며 models.yaml 의 각 모델이 이 키를 참조한다.
+# 실제 API 모델 문자열은 .env 의 MODEL_* 변수로 주입되고, 단가는 여기서만 정의한다.
+# 단위: USD per 1,000,000 tokens
+gemini-2.5-flash:
+  input: 0.30
+  output: 2.50
+gpt-4o-mini:
+  input: 0.15
+  output: 0.60
+claude-haiku-4.5:
+  input: 1.00
+  output: 5.00
+o3:
+  input: 2.00
+  output: 8.00
+o4-mini:
+  input: 1.10
+  output: 4.40
+claude-sonnet-4-5:
+  input: 3.00
+  output: 15.00
+gemini-3.1-pro:
+  input: 2.00
+  output: 12.00

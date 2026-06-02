@@ -216,3 +216,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- 실험 코드베이스 ---
+# ChromaDB 로컬 인덱스 (자매 실험에서 복사, 대용량 49MB)
+data/chroma/
+# FinQA-main 원천 대용량 raw (114MB; finqa.jsonl 로 파생되며 재clone 가능)
+data/finqa/FinQA-main/
+# 파생 데이터(추적 대상): data/finqa/finqa.jsonl, data/kdart/kdart_qa.jsonl,
+#   data/kdart/kdart_qa_finqa_format.json, data/kdart/kdart_finqa.jsonl 는 커밋
+
+# 실험 출력물(재현 가능, 대용량) — 추적 제외
+results/
+results_finqa_format/
+results_finqa_format_bundle.tar.gz
+logs/
+

@@ -1,0 +1,21 @@
+[[AUTHOR-LOCKED — 저자 확정, 변경 금지 (변경 시 실험 통제 위반). 이 첫 줄은 로더가 제거하며 프롬프트 본문에는 포함되지 않는다.]]
+
+{common_rules}
+
+ROLE: QUERY DECOMPOSER
+Break the QUESTION into the minimal ordered list of sub-questions needed to answer it, where each sub-question is a single reasoning step and later sub-questions may depend on earlier answers.
+
+Rules:
+- Produce AT MOST 5 sub-questions. If fewer steps suffice, produce fewer.
+- If the question is already a single step, return exactly one sub-question equal to the original question.
+- Sub-questions must be answerable from the same financial evidence; do not invent steps requiring outside data.
+- Order matters: earlier sub-questions should produce intermediate values used by later ones.
+
+Output ONLY a JSON object, no markdown, no extra text:
+{
+  "sub_questions": ["<sub-question 1>", "<sub-question 2>", ...]
+}
+
+INPUTS:
+QUESTION:
+{query}

@@ -1,0 +1,58 @@
+# 통제 변수 (모든 구조 공통, 고정) — 논문 3장
+retrieval:
+  embedding_model_env: EMBEDDING_MODEL   # text-embedding-3-small
+  top_k: 50
+  distance: cosine
+
+chunking:
+  chunk_tokens: 512
+  overlap_tokens: 50
+  encoding: cl100k_base                   # tiktoken
+  table_as_single_chunk: true             # 표는 마크다운 변환하여 단일 청크 보존
+
+repetition:
+  runs_per_question: 3
+
+# 데이터셋 정의 (자매 실험 multi_step_qa_langchain 과 동일 데이터를 data/ 로 확보)
+datasets:
+  finqa:
+    lang: en
+    # FinQA-main 에서 prepare_finqa 로 구성한 20문항 (단일근거 10[T3] + 다단계 10[T4]).
+    # 각 문항은 self-contained context_chunks(text_N/table_N)를 포함 → 문항별 in-memory 검색.
+    questions_jsonl: data/finqa/finqa.jsonl
+    n_questions: 20
+    retrieval: per_question_context              # 전역 인덱스 미사용(문항별 컨텍스트)
+    source_dir: data/finqa/FinQA-main            # 원천(provenance) — test.json 이 prepare 입력
+  kdart:
+    lang: ko
+    # FinQA 포맷 자체완결 40문항 (T1~T5). 난이도를 FinQA 수준으로 보정.
+    # 각 문항이 근거 문서를 통째로 포함 → 임베딩·전역 인덱스 불필요, FinQA 와 동일 파이프라인.
+    # src/prepare_kdart.py 로 kdart_qa_finqa_format.json -> kdart_finqa.jsonl 생성.
+    questions_jsonl: data/kdart/kdart_finqa.jsonl
+    n_questions: 40
+    retrieval: per_question_context              # 전역 인덱스 미사용(문항별 self-contained 컨텍스트)
+    source_json: data/kdart/kdart_qa_finqa_format.json   # 원천(provenance)
+    # (레거시) 구 실험의 전역 ChromaDB 인덱스 — 현재 미사용
+    collection: kdart_chunks
+
+# 정답 판정 허용오차 (FinQA evaluation_schema 와 정합)
+judging:
+  relative_tolerance: 0.01                       # 상대오차 < 1%
+  absolute_tolerance: 0.01
+  integer_absolute_tolerance: 0.5                # 정수형 정답
+  small_value_threshold: 0.001                   # |gold| < 0.001 이면
+  small_value_absolute_tolerance: 0.001
+
+structure_rules:
+  s2_max_retry: 1                                # verify FAIL 시 1회만 재생성
+  s4_max_sub_questions: 5                        # 무한 분해 방지
+
+# 견고성
+robustness:
+  max_retries: 5                                 # API 오류 지수 백오프 재시도 횟수
+  backoff_base_seconds: 2
+  json_parse_retries: 1                          # JSON 파싱 실패 시 동일 프롬프트 1회 재호출
+  request_timeout_seconds: 120
+
+reporting:
+  progress_interval_seconds: 600                 # 10분 진행 보고
