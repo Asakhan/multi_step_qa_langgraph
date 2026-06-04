@@ -1,5 +1,11 @@
 """K-DART-QA (FinQA 포맷) kdart_qa_finqa_format.json -> data/kdart/kdart_finqa.jsonl.
 
+[주의 — 재현 경로 아님] 실험에 쓰인 정본은 저장소에 커밋된 data/kdart/kdart_finqa.jsonl
+이며, 이는 별도 구축 저장소(https://github.com/Asakhan/kdart_qa, 논문 §3.3.4)의 산출물이다.
+이 스크립트는 참고용 파생 코드로, 청크 라벨링(text_N/table_N)·gold 추출 방식이 정본과
+다를 수 있어 **정본을 재현하지 않는다**. 따라서 재현 시에는 실행하지 말고 커밋된 정본을
+그대로 사용하라(build_index 는 이 스크립트를 호출하지 않는다).
+
 새 데이터셋은 FinQA-main test.json 과 **동일한 구조**(pre_text/post_text/table/qa)에
 kdart_meta 를 더한 자체완결(self-contained) 포맷이다. 각 문항이 자기 근거 문서를 통째로
 포함하므로 전역 ChromaDB 인덱스도, 임베딩 검색도 필요 없다. FinQA 와 동일하게 문항별

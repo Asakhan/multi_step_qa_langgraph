@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# 진입점. S0~S4 개별/전체 실행, 백그라운드(nohup+setsid) 구동, 상태/중단, 인덱스/회귀검증/워처.
+# 진입점. 구조(S0~S5) 개별/전체 실행, 백그라운드(setsid) 구동, 상태/중단, 데이터검증/회귀검증/워처.
+#
+# 논문 매핑: 예비실험=S0~S4, 본실험 실험2=S2(검증 항상), 실험3=S5(동적 신뢰도 캐스케이드).
 #
 # 사용법:
-#   ./run.sh build-index                # FinQA finqa.jsonl 생성 + K-DART 인덱스 검증
-#   ./run.sh smoke                      # 표본 회귀검증 (구조별 데이터셋당 2문항, S1~S4)
-#   ./run.sh s2                         # S2(실험2)만 백그라운드 실행
-#   ./run.sh s5                         # S5(실험3 캐스케이드)만 백그라운드 실행
+#   ./run.sh build-index                # 데이터 파생본 재생성 + 60문항 로드 검증 (키 불필요)
+#   ./run.sh smoke                      # 동작 검증: 본실험(s2 s5)×데이터셋당 2문항 (GOOGLE 키만)
+#   ./run.sh smoke s0 s2 s3 s4          # 예비실험까지 점검 (OPENAI/ANTHROPIC 키 필요)
+#   ./run.sh s2                         # 본실험 실험2(S2)만 백그라운드 실행
+#   ./run.sh s5                         # 본실험 실험3(S5 캐스케이드)만 백그라운드 실행
 #   ./run.sh s2 s5 --runs 3 --datasets finqa kdart   # 본실험(실험2+3) 동시 백그라운드
-#   ./run.sh s1 s3 s4                   # 일부만
-#   ./run.sh all                        # S1~S4 전체 (S0 제외)
-#   ./run.sh all --run-s0               # S0 포함
+#   ./run.sh s0 s1 s2 s3 s4             # 예비실험 일부/전체
+#   ./run.sh all                        # 예비실험 S1~S4 (S0 제외)
+#   ./run.sh all --run-s0               # 예비실험 S0 포함
 #   ./run.sh status                     # 진행 확인 (pid + 로그 tail + 워처)
 #   ./run.sh stop                       # 중단 (본체 + 워처)
 #   ./run.sh watch                      # 10분 진행 워처 (이 세션이 살아있는 동안만)
@@ -60,8 +63,14 @@ case "$cmd" in
     exec "$PY" -m src.build_index "$@"
     ;;
   smoke)
-    echo "[run.sh] 표본 회귀검증: S1~S4 × 데이터셋당 2문항 × 3반복 (전경 실행)"
-    exec "$PY" -m src.orchestrator --structures s1 s2 s3 s4 --limit-per-dataset 2 "$@"
+    # 동작 검증(전경): 구조별 데이터셋당 2문항 × 3반복.
+    # 구조 미지정 시 본실험(실험2=s2, 실험3=s5) — GOOGLE_API_KEY 하나로 실행 가능.
+    # 예비실험까지 점검하려면: ./run.sh smoke s0 s2 s3 s4 (OPENAI/ANTHROPIC 키 필요).
+    smoke_structs=()
+    while [[ $# -gt 0 && "$1" != --* ]]; do smoke_structs+=("$1"); shift; done
+    [[ ${#smoke_structs[@]} -eq 0 ]] && smoke_structs=(s2 s5)
+    echo "[run.sh] 동작 검증: ${smoke_structs[*]} × 데이터셋당 2문항 × 3반복 (전경 실행)"
+    exec "$PY" -m src.orchestrator --structures "${smoke_structs[@]}" --limit-per-dataset 2 "$@"
     ;;
   status)
     if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
