@@ -46,6 +46,12 @@ judging:
 structure_rules:
   s2_max_retry: 1                                # verify FAIL 시 1회만 재생성
   s4_max_sub_questions: 5                        # 무한 분해 방지
+  # 실험 3(S5: 동적 신뢰도 캐스케이드) — 논문 3.4.3
+  s5_confidence_threshold: 0.8                   # gate 임계값(스윕 대상). .env S5_THRESHOLD 로 오버라이드 가능
+                                                 # (데이터 기반: gemini-flash 자기보고가 0.70(다단계)/0.95~1.0(직접조회)
+                                                 #  이봉분포라 0.7은 '불확실 앵커'와 같아 0% escalate → 0.8로 설정.
+                                                 #  스윕 0.5~0.9가 0%→70% 전이를 포착. 최종 비교는 스윕 최적 임계값 사용.)
+  s5_max_retry: 1                                # escalate→verify FAIL 시 1회만 재생성(s2와 동일)
 
 # 견고성
 robustness:

@@ -4,13 +4,16 @@
 # 사용법:
 #   ./run.sh build-index                # FinQA finqa.jsonl 생성 + K-DART 인덱스 검증
 #   ./run.sh smoke                      # 표본 회귀검증 (구조별 데이터셋당 2문항, S1~S4)
-#   ./run.sh s2                         # S2만 백그라운드 실행
+#   ./run.sh s2                         # S2(실험2)만 백그라운드 실행
+#   ./run.sh s5                         # S5(실험3 캐스케이드)만 백그라운드 실행
+#   ./run.sh s2 s5 --runs 3 --datasets finqa kdart   # 본실험(실험2+3) 동시 백그라운드
 #   ./run.sh s1 s3 s4                   # 일부만
 #   ./run.sh all                        # S1~S4 전체 (S0 제외)
 #   ./run.sh all --run-s0               # S0 포함
-#   ./run.sh status                     # 진행 확인 (pid + 로그 tail)
-#   ./run.sh stop                       # 중단
+#   ./run.sh status                     # 진행 확인 (pid + 로그 tail + 워처)
+#   ./run.sh stop                       # 중단 (본체 + 워처)
 #   ./run.sh watch                      # 10분 진행 워처 (이 세션이 살아있는 동안만)
+#   ./run.sh watch-bg                   # 10분 진행 워처 백그라운드 (세션 죽어도 지속; 기본 s2 s5)
 #   ./run.sh analysis                   # 통계 분석 + 최종 리포트
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -68,9 +71,13 @@ case "$cmd" in
     fi
     latest="$(ls -t logs/run_*.log 2>/dev/null | head -1 || true)"
     [[ -n "$latest" ]] && { echo "--- ${latest} (tail) ---"; tail -n 30 "$latest"; }
-    echo "--- 구조별 완료 run 수 ---"
-    for s in s0 s1 s2 s3 s4; do
-      f="results/$s/raw_runs.jsonl"
+    if [[ -f "logs/watch.pid" ]] && kill -0 "$(cat logs/watch.pid)" 2>/dev/null; then
+      echo "[run.sh] 워처 실행 중 (PID $(cat logs/watch.pid))"
+    fi
+    echo "--- 구조별 완료 run 수 (RESULTS_DIR=${RESULTS_DIR:-results}) ---"
+    rd="${RESULTS_DIR:-results}"
+    for s in s0 s1 s2 s3 s4 s5; do
+      f="$rd/$s/raw_runs.jsonl"
       [[ -f "$f" ]] && echo "  $s: $(wc -l < "$f") runs"
     done
     ;;
@@ -86,15 +93,38 @@ case "$cmd" in
     fi
     pkill -TERM -f "src.orchestrator" 2>/dev/null || true
     pkill -TERM -f "src.runner" 2>/dev/null || true
-    echo "[run.sh] orchestrator/runner 종료 신호 전송 완료"
+    # 워처(reporter) 백그라운드 종료
+    if [[ -f "logs/watch.pid" ]]; then
+      wpid="$(cat logs/watch.pid)"
+      kill -TERM -- "-${wpid}" 2>/dev/null || kill -TERM "$wpid" 2>/dev/null || true
+      rm -f logs/watch.pid
+    fi
+    pkill -TERM -f "src.reporter" 2>/dev/null || true
+    echo "[run.sh] orchestrator/runner/reporter(워처) 종료 신호 전송 완료"
     ;;
   watch)
+    # 포그라운드 워처(이 세션이 살아있는 동안만). 세션이 죽어도 지속하려면 watch-bg 사용.
     exec "$PY" -m src.reporter --watch "$@"
+    ;;
+  watch-bg)
+    # 10분 진행 워처를 setsid 백그라운드로 띄운다(세션이 죽어도 진행 메일 지속).
+    # 구조 미지정 시 본실험(실험2=s2, 실험3=s5) 기본값 사용.
+    case " $* " in
+      *" --structures "*) : ;;
+      *) set -- --structures s2 s5 "$@" ;;
+    esac
+    ts="$(date +%Y%m%d_%H%M%S)"
+    wlog="logs/watch_${ts}.log"
+    echo "[run.sh] 워처 백그라운드 실행: --watch $*"
+    echo "[run.sh] 워처 로그: ${wlog}"
+    setsid bash -c "echo \$\$ > 'logs/watch.pid'; exec '$PY' -m src.reporter --watch $* > '$wlog' 2>&1" </dev/null &
+    sleep 0.5
+    echo "[run.sh] 워처 PID $(cat logs/watch.pid 2>/dev/null) (logs/watch.pid). './run.sh stop' 으로 본체와 함께 종료."
     ;;
   analysis)
     exec "$PY" -m src.analysis "$@"
     ;;
-  s0|s1|s2|s3|s4|all)
+  s0|s1|s2|s3|s4|s5|all)
     start_bg "$cmd" "$@"
     ;;
   ""|help|-h|--help)

@@ -45,7 +45,56 @@ def test_numeric_tolerance():
 
 
 def test_numeric_wrong():
+    # % 표기가 전혀 없으면 100배 차이는 스케일 보정하지 않고 오답 유지(무분별 보정 방지)
     assert not is_correct("0.14464", "14.464").correct
+
+
+# ---- (a) 퍼센트 ↔ 비율 소수 정합 (실패사례 기반 회귀) ----
+def test_percent_ratio_match():
+    # finqa: gold 비율소수 vs pred 퍼센트 → ×100 정합 → 정답
+    assert is_correct("0.15653", "15.65%").correct
+    assert is_correct("0.0585", "5.85%").correct
+    assert is_correct("0.2895", "28.95%").correct
+    assert is_correct("0.19859", "19.86%").correct
+
+
+def test_percent_ratio_genuine_error_not_passed():
+    # 사용자 예시: 0.1954(=19.54%) vs 16.35% → 스케일 후에도 불일치 → 진짜 오답(자동보정 금지)
+    j = is_correct("0.1954", "16.35%")
+    assert not j.correct
+    # 19.54 vs 16.35 는 5배 허용오차(5%) 밖 → flag 도 아님
+    assert not j.judge_flag
+
+
+def test_percent_guard_requires_explicit_sign():
+    # 한쪽에 % 표기가 없으면(둘 다 bare) 100배 정합이어도 보정하지 않음
+    assert not is_correct("0.0585", "5.85").correct      # pred 에 % 없음
+    # 양쪽 다 퍼센트인데 100배 차이 → 오답 유지(같은 단위)
+    assert not is_correct("50%", "5000%").correct
+    # 양쪽 다 절대수치인데 100배 차이 → 오답 유지
+    assert not is_correct("747", "74700").correct
+
+
+def test_percent_unit_blocks_false_scale():
+    # gold_answer_unit='%' 이면 gold("0.5")는 0.5% 의미(비율 아님) → 50% 와 스케일 정합 금지
+    assert not is_correct("0.5", "50%", unit="%").correct
+    # 반면 unit 미지정(finqa)인 0.5 는 비율(=50%)로 보아 50% 와 정합
+    assert is_correct("0.5", "50%").correct
+    # kdart % gold 는 동일 크기 pred 와 정상 정답
+    assert is_correct("44.9", "44.9%", unit="%").correct
+
+
+# ---- (b) 부호 불일치: 자동 정답 금지, judge_flag 로만 표시 ----
+def test_sign_mismatch_flags_not_correct():
+    # finqa: gold 음수(감소) vs pred 절댓값 퍼센트 → 오답이되 검토 플래그
+    j = is_correct("-0.12381", "12.38%")
+    assert not j.correct and j.judge_flag
+    # kdart: gold 음수 % vs pred 양수 % (크기 동일) → 오답 + 플래그
+    j2 = is_correct("-91.05", "91.05%", unit="%")
+    assert not j2.correct and j2.judge_flag
+    # 부호 반대 방향(gold 양수, pred 음수)도 동일
+    j3 = is_correct("1.16", "-1.16%", unit="%")
+    assert not j3.correct and j3.judge_flag
 
 
 # ---- 텍스트 판정 ----

@@ -50,24 +50,37 @@ def _estimate_tokens(text: str) -> int:
         return max(1, len(text) // 4)
 
 
+# reasoning(추론) 모델은 temperature 커스터마이즈가 불가하므로 통제(temperature=0)에서 제외.
+_REASONING_KEYS = {"o3", "o4_mini"}
+
+
 @lru_cache(maxsize=None)
 def _chat_model(logical_key: str):
-    """provider 에 맞는 LangChain chat 모델을 생성(캐시). 생성 파라미터는 기본값."""
+    """provider 에 맞는 LangChain chat 모델을 생성(캐시).
+
+    논문 3.2.1 통제: temperature=0 으로 생성 무작위성을 제거한다(결정적 디코딩).
+    본실험(실험2=s2, 실험3=s5)은 gemini_flash 단일 모델만 쓰므로 google 경로만
+    실제 작동하면 되지만, 통제는 모든 provider 에 일관 적용한다.
+    """
     provider = config.model_provider(logical_key)
     model = config.model_string(logical_key)
     timeout = config.experiment_cfg()["robustness"]["request_timeout_seconds"]
 
     if provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(model=model, timeout=timeout, max_retries=0)
+        # 논문 3.2.1 통제: temperature=0
+        return ChatGoogleGenerativeAI(model=model, temperature=0, timeout=timeout, max_retries=0)
     if provider == "openai":
         from langchain_openai import ChatOpenAI
-        # o3 등 reasoning 모델은 temperature 커스터마이즈 불가 → 기본값만 사용.
-        return ChatOpenAI(model=model, timeout=timeout, max_retries=0)
+        # 논문 3.2.1 통제: temperature=0. 단 o3 등 reasoning 모델은 temperature
+        # 커스터마이즈가 불가하므로 기본값을 유지(제외).
+        if logical_key in _REASONING_KEYS:
+            return ChatOpenAI(model=model, timeout=timeout, max_retries=0)
+        return ChatOpenAI(model=model, temperature=0, timeout=timeout, max_retries=0)
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
-        # ChatAnthropic 은 max_tokens 필수. 답변+추론 JSON 수용 위해 넉넉히.
-        return ChatAnthropic(model=model, timeout=timeout, max_retries=0, max_tokens=4096)
+        # 논문 3.2.1 통제: temperature=0. ChatAnthropic 은 max_tokens 필수(넉넉히 4096).
+        return ChatAnthropic(model=model, temperature=0, timeout=timeout, max_retries=0, max_tokens=4096)
     raise config.ConfigError(f"알 수 없는 provider: {provider} (logical_key={logical_key})")
 
 

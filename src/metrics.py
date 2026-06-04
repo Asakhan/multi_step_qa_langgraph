@@ -9,11 +9,31 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from . import config
 
 TEXT_UNITS = {"항목명", "사업부문명"}
+
+# 유니코드 기호 정규화(U+2212 등) — 표기 차이로 인한 오판정 방지.
+# NFKC 가 U+2212(−)/대시류를 ASCII '-' 로 바꾸지 않으므로 명시 치환을 NFKC 앞에 둔다.
+_UNICODE_SYMBOL_MAP = {
+    "−": "-", "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-",
+    "％": "%", "，": ",", " ": " ",
+}
+
+
+def _ascii_symbols(t: str) -> str:
+    """숫자 파싱 전 유니코드 기호를 ASCII 로 정규화(값·부호 불변, 과교정 아님)."""
+    for k, v in _UNICODE_SYMBOL_MAP.items():
+        if k in t:
+            t = t.replace(k, v)
+    return unicodedata.normalize("NFKC", t)
+
+# gold_answer_unit 이 이 집합이면 gold 값이 이미 "퍼센트 크기"(비율 소수가 아님)임을 뜻한다.
+# (예: kdart gold "44.9"(unit=%)는 44.9% 를 의미하므로 비율 0.449 로 오인해 ×100 하면 안 됨)
+PERCENT_UNITS = {"%", "%p", "%pt"}
 
 # 자릿수 단위(스케일 적용) — 긴 접미사 우선
 _MAGNITUDE_UNITS = [
@@ -28,21 +48,28 @@ _MAGNITUDE_UNITS = [
 _PLAIN_UNITS = ["%pt", "%p", "%", "배", "개", "명", "건", "회", "점", "pt", "x", "X"]
 
 
-def normalize_number(s) -> float | None:
-    """문자열을 단위 정규화하여 float 로 변환. 변환 불가 시 None.
+def _normalize_number_ex(s) -> tuple[float | None, bool]:
+    """문자열을 단위 정규화하여 (float|None, is_percent) 로 반환.
 
-    예: '44.9%'->44.9, '1,234백만원'->1.234e9, '4,273천원'->4273000, '-35.0'->-35.0
+    is_percent 는 값이 **명시적 퍼센트 표기**('...%')였는지 여부. 단 '%pt'/'%p'(퍼센트
+    포인트)는 차이값이라 비율 환산 대상이 아니므로 is_percent=False 로 둔다. 이 플래그로
+    비교 단계에서 비율 소수↔퍼센트 100배 스케일 정합을 안전하게 판단한다.
+
+    예: '44.9%'->(44.9,True), '15.65%'->(15.65,True), '0.15653'->(0.15653,False),
+        '5%pt'->(5.0,False), '1,234백만원'->(1.234e9,False)
     """
     if s is None:
-        return None
+        return None, False
     t = str(s).strip()
     if t == "":
-        return None
+        return None, False
+    t = _ascii_symbols(t)   # 유니코드 기호 정규화(U+2212 등)
     t = t.replace(",", "").replace(" ", "")
     t = t.replace("₩", "").replace("$", "")
     t = re.sub(r"(?i)usd", "", t)
 
     scale = 1.0
+    is_percent = False
     for unit, mult in _MAGNITUDE_UNITS:
         if t.endswith(unit):
             t = t[: -len(unit)]
@@ -52,15 +79,25 @@ def normalize_number(s) -> float | None:
         for unit in _PLAIN_UNITS:
             if t.endswith(unit):
                 t = t[: -len(unit)]
+                if unit == "%":           # 순수 퍼센트만(%pt/%p 제외)
+                    is_percent = True
                 break
 
     m = re.search(r"[-+]?\d*\.?\d+", t)
     if not m:
-        return None
+        return None, False
     try:
-        return float(m.group()) * scale
+        return float(m.group()) * scale, is_percent
     except ValueError:
-        return None
+        return None, False
+
+
+def normalize_number(s) -> float | None:
+    """문자열을 단위 정규화하여 float 로 변환. 변환 불가 시 None.
+
+    예: '44.9%'->44.9, '1,234백만원'->1.234e9, '4,273천원'->4273000, '-35.0'->-35.0
+    """
+    return _normalize_number_ex(s)[0]
 
 
 def normalize_text(s) -> str:
@@ -104,20 +141,64 @@ class Judgement:
     mode: str          # 'numeric' | 'text'
 
 
+def _percent_reconcile(gn: float, g_pct: bool, pn: float, p_pct: bool) -> bool:
+    """비율 소수 ↔ 퍼센트 표기의 100배 스케일 정합 여부(같은 부호 한정).
+
+    **정확히 한쪽만** 퍼센트('%')이고 다른 쪽이 비율 소수(|x|<=1)일 때에만 ×100 하여
+    비교한다. 양쪽 다 퍼센트이거나 양쪽 다 비표기면(둘 다 절대수치/비율) 스케일하지 않아
+    무분별 보정을 막는다. 부호가 다르면 numeric_close 가 실패하므로 여기서 정답 처리되지
+    않는다(부호 불일치는 _sign_only_mismatch 가 flag 로만 표시).
+    """
+    if g_pct == p_pct:
+        return False
+    if p_pct and not g_pct and abs(gn) <= 1.0 + 1e-9:
+        return numeric_close(gn * 100.0, pn)
+    if g_pct and not p_pct and abs(pn) <= 1.0 + 1e-9:
+        return numeric_close(gn, pn * 100.0)
+    return False
+
+
+def _sign_only_mismatch(gn: float, g_pct: bool, pn: float, p_pct: bool) -> bool:
+    """부호만 다르고 크기는 정합(필요시 퍼센트 100배 보정 후)하는가.
+
+    True 면 '감소/증가' 부호 누락 의심 → 자동 정답 처리하지 않고 judge_flag 로만 남긴다.
+    """
+    if (gn < 0) == (pn < 0):
+        return False
+    ag, ap = abs(gn), abs(pn)
+    if numeric_close(ag, ap):
+        return True
+    if g_pct != p_pct:
+        if p_pct and not g_pct and ag <= 1.0 + 1e-9 and numeric_close(ag * 100.0, ap):
+            return True
+        if g_pct and not p_pct and ap <= 1.0 + 1e-9 and numeric_close(ag, ap * 100.0):
+            return True
+    return False
+
+
 def is_correct(gold, pred, unit: str | None = None) -> Judgement:
     """gold 와 pred 의 정답 일치 판정. unit 으로 텍스트/수치 분기."""
     # 단위 메타로 텍스트형 강제
     force_text = unit in TEXT_UNITS if unit else False
 
     if not force_text:
-        gn = normalize_number(gold)
-        pn = normalize_number(pred)
+        gn, g_pct = _normalize_number_ex(gold)
+        pn, p_pct = _normalize_number_ex(pred)
+        # gold 단위가 퍼센트면 gold 는 이미 퍼센트 크기(비율 소수 아님) → ×100 오인 방지.
+        if unit in PERCENT_UNITS:
+            g_pct = True
         if gn is not None and pn is not None:
             ok = numeric_close(gn, pn)
-            # 경계 플래그: 정답은 아니지만 5배 허용오차 내(근접)면 검토 대상
+            # 비율↔퍼센트 100배 스케일 정합(같은 부호, 명시적 % 한쪽 한정)
+            if not ok and _percent_reconcile(gn, g_pct, pn, p_pct):
+                ok = True
             flag = False
-            if not ok and abs(gn) > 0:
-                if abs(gn - pn) / abs(gn) <= 5 * float(_jcfg()["relative_tolerance"]):
+            if not ok:
+                # (b) 부호만 다르고 크기 정합 → 자동정답 금지, 검토 플래그만.
+                if _sign_only_mismatch(gn, g_pct, pn, p_pct):
+                    flag = True
+                # 경계 플래그: 정답은 아니지만 5배 허용오차 내(근접)면 검토 대상
+                elif abs(gn) > 0 and abs(gn - pn) / abs(gn) <= 5 * float(_jcfg()["relative_tolerance"]):
                     flag = True
             return Judgement(ok, flag, "numeric")
         if gn is not None and pn is None:

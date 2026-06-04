@@ -41,6 +41,12 @@ class AgentState(TypedDict, total=False):
     retry_count: int
     verify_verdict: str                        # PASS|FAIL (마지막 검증 결과)
 
+    # --- 동적 신뢰도 캐스케이드(S5, 실험 3) ---
+    confidence: float                          # 유효 신뢰도 0~1 (gate 입력; 보조신호 보정 후)
+    confidence_self_report: float              # 모델 원자기보고 신뢰도(보정 전, 분석/H3용)
+    code_conflict: bool                        # 추론답 vs 코드실행답 불일치(보조신호) 감지 여부
+    gate_decision: str                         # "stop"(확신→END) | "escalate"(불확실→verify)
+
     # --- 분해/해결(S4) ---
     sub_questions: list[str]
     sub_answers: list[dict[str, Any]]          # [{sub_question, partial_answer, reasoning, expressions, evidence}]
@@ -72,6 +78,10 @@ def new_state(query: str, *, dataset: str, question_id: str, task_type: str, lan
         critique="",
         retry_count=0,
         verify_verdict="",
+        confidence=0.0,
+        confidence_self_report=0.0,
+        code_conflict=False,
+        gate_decision="",
         sub_questions=[],
         sub_answers=[],
         token_usage=[],

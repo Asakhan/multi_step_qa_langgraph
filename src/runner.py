@@ -161,6 +161,12 @@ def run_one(graph, structure: str, q: Question, run_index: int) -> dict:
         "retry_count": final.get("retry_count", 0),
         "verify_verdict": final.get("verify_verdict", ""),
         "critique": final.get("critique", ""),
+        # 실험3(S5) 게이트 신호 — H3 보조가설(게이트 발동 집합 vs 실제 오답 집합) 비교용
+        "confidence": final.get("confidence", 0.0),                       # 유효(보정 후) — gate 입력
+        "confidence_self_report": final.get("confidence_self_report", 0.0),  # 모델 원자기보고
+        "code_conflict": final.get("code_conflict", False),              # 보조신호: 추론답 vs 코드실행답 충돌
+        "gate_decision": final.get("gate_decision", ""),
+        "escalated": final.get("gate_decision", "") == "escalate",
         "sub_questions": final.get("sub_questions", []),
         "sub_answers": final.get("sub_answers", []),
         "aggregation_info": final.get("aggregation_info", {}),

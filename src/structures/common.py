@@ -10,7 +10,7 @@ import json
 import time
 from functools import lru_cache
 
-from .. import config, llm_clients, tools
+from .. import config, llm_clients, metrics, tools
 from ..prompt_loader import system_prompt
 
 _MODELS = config.models_cfg()
@@ -151,6 +151,92 @@ def make_generate_node(structure: str, role: str = "generate", node_name: str = 
             "node_latencies": [{"node": node_name, "seconds": time.perf_counter() - t0}],
         }
     return generate_node
+
+
+def _reasoning_code_conflict(final_answer: str, expressions: list[str]):
+    """보조 신뢰도 신호(논문 3.4.3): '추론 답(final_answer) vs 코드 실행 답(expressions)' 불일치.
+
+    used_expression 의 각 산술식을 tools.safe_calc 로 재실행한 값들 중 **어느 하나라도**
+    final_answer 와 채점기(metrics.is_correct, 동일 허용오차·퍼센트 정합)로 정합하면 일관(False).
+    하나도 정합하지 않으면 모델이 제시한 산술이 자신의 답을 재현하지 못한 것이므로 충돌(True).
+
+    반환: True(충돌) | False(일관) | None(미적용 — 비수치 답이거나 실행 가능한 식 없음).
+    self-consistency 는 temperature=0 에서 불가하므로(논문 3.1) 이 결정적 보조신호를 쓴다.
+    """
+    fn = metrics.normalize_number(final_answer)
+    if fn is None:
+        return None  # 비수치 답(항목명/텍스트 등) → 보조신호 미적용, 자기보고 유지
+    computed = []
+    for e in (expressions or []):
+        v, err = tools.safe_calc(e)
+        if err is None and v is not None:
+            computed.append(v)
+    if not computed:
+        return None  # 코드 실행 가능한 산술식 없음 → 미적용
+    for cv in computed:
+        if metrics.is_correct(cv, final_answer).correct:
+            return False  # 산술이 답을 재현 → 일관
+    return True  # 어떤 식도 답을 재현 못함 → 충돌
+
+
+def make_generate_s5_node(structure: str, role: str = "generate", node_name: str = "generate"):
+    """generate (S5, 실험3): generate_node 와 동일하되 generate_s5.txt 를 써서
+    모델 자기보고 confidence(0~1)를 산출하고, 보조신호(추론답 vs 코드실행답 불일치)로
+    보정한 '유효 confidence' 를 state['confidence'] 로 기록(gate 가 이를 임계값과 비교).
+
+    논문 3.4.3 — 1차 신호=자기보고. 단 temperature=0 에서 모델이 과신해 1.0 을 남발하면
+    캐스케이드가 퇴화하므로, 모델이 제시한 산술식이 자신의 답을 재현하지 못하는(결정적)
+    충돌이 감지되면 유효 confidence 를 0.0 으로 강제 하향해 검증(verify)으로 에스컬레이트한다.
+    일관(충돌 아님)·비수치 답이면 자기보고 값을 그대로 사용한다(보수적: 오탐 escalate 최소화).
+    """
+    logical = _logical(structure, role)
+
+    def generate_s5_node(state):
+        t0 = time.perf_counter()
+        slots = {
+            "query": state["query"],
+            "evidence": _evidence_str(state),
+            "critique": state.get("critique", "") or "",
+        }
+        parsed, records = call_json(logical, "generate_s5.txt", slots, node_name)
+        final_answer = str(parsed.get("final_answer", ""))
+        expressions = list(parsed.get("expressions", []) or [])
+        try:
+            self_conf = float(parsed.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            self_conf = 0.0
+        self_conf = max(0.0, min(1.0, self_conf))  # 0~1 클램프
+
+        conflict = _reasoning_code_conflict(final_answer, expressions)
+        # 보조신호 보정: 결정적 충돌이면 0.0 으로 강제 하향(escalate 유도), 아니면 자기보고 유지.
+        eff_conf = 0.0 if conflict is True else self_conf
+        return {
+            "final_answer": final_answer,
+            "reasoning_trace": str(parsed.get("reasoning", "")),
+            "used_expression": expressions,
+            "confidence": eff_conf,
+            "confidence_self_report": self_conf,   # 모델 원자기보고(분석/H3용)
+            "code_conflict": bool(conflict) if conflict is not None else False,
+            "token_usage": records,
+            "node_latencies": [{"node": node_name, "seconds": time.perf_counter() - t0}],
+        }
+    return generate_s5_node
+
+
+def make_gate_node(threshold: float):
+    """gate (S5, 실험3): generate 자기보고 confidence 를 임계값과 비교해 분기 결정.
+    confidence >= threshold → gate_decision='stop'(확신, END),
+    아니면 → 'escalate'(불확실, verify 로). LLM 호출 없음(토큰 0). 지연만 기록한다.
+    """
+    def gate_node(state):
+        t0 = time.perf_counter()
+        conf = float(state.get("confidence", 0.0) or 0.0)
+        decision = "stop" if conf >= threshold else "escalate"
+        return {
+            "gate_decision": decision,
+            "node_latencies": [{"node": "gate", "seconds": time.perf_counter() - t0}],
+        }
+    return gate_node
 
 
 def make_verify_node(structure: str):

@@ -225,9 +225,13 @@ data/finqa/FinQA-main/
 # 파생 데이터(추적 대상): data/finqa/finqa.jsonl, data/kdart/kdart_qa.jsonl,
 #   data/kdart/kdart_qa_finqa_format.json, data/kdart/kdart_finqa.jsonl 는 커밋
 
-# 실험 출력물(재현 가능, 대용량) — 추적 제외
+# 실험 출력물(재현 가능, 대용량) — 추적 제외.
+# 본실험(results_exp2_3)·임계값 스윕(results_exp3_t*)·예비실험 재채점
+# (results_finqa_format_rejudged)·스모크(results_smoke) 등 모든 results_* 디렉토리 포함.
 results/
-results_finqa_format/
-results_finqa_format_bundle.tar.gz
+results_*/
+# raw 번들·백업 임시파일
+*.tar.gz
+*.bak
 logs/
 
