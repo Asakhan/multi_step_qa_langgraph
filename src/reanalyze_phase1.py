@@ -729,8 +729,50 @@ def section9(data: dict[str, list[dict]], out_dir: Path) -> dict:
         pattern[key] += 1
         pattern_by_struct[_r["structure"]][key] += 1
 
+    # --- 압축 코딩시트 --- 같은 (문항, 예측답) 조합은 오류 유형이 같으므로 한 번만 판단하면
+    # 된다. 166 run 이 39 조합으로 줄어 저자의 분류 횟수가 1/4 이하가 된다.
+    compact = {}
+    with open(sheet_path, encoding="utf-8-sig") as fh:
+        _lines = [ln for ln in fh if not ln.startswith("#")]
+    for _r in csv.DictReader(_lines):
+        key = (_r["question_id"], _r["pred_answer"])
+        if key not in compact:
+            compact[key] = dict(_r)
+            compact[key]["n_runs"] = 0
+            compact[key]["structures"] = set()
+        compact[key]["n_runs"] += 1
+        compact[key]["structures"].add(_r["structure"])
+
+    compact_path = out_dir / "E1_E5_코딩시트_압축.csv"
+    cfields = ["question_id", "pred_answer", "gold_answer", "n_runs", "structures",
+               "task_type", "dataset", "query", "abstention", "gold_chunk_retrieved",
+               "expr_recompute", "expr_matches_answer", "scale_relation",
+               "reasoning_trace", "error_type", "error_type_r2", "note"]
+    with open(compact_path, "w", encoding="utf-8-sig", newline="") as fh:
+        fh.write("# E1~E5 오류 유형 저자 분류용 코딩시트 (압축본)\n")
+        fh.write("# 같은 (question_id, pred_answer) 조합은 오류 유형이 동일하므로 한 행으로 묶었다.\n")
+        fh.write("# n_runs = 이 조합에 해당하는 run 수, structures = 해당 구조 목록.\n")
+        for k, v in E_TYPES.items():
+            fh.write(f"# {k} {v}\n")
+        fh.write("# 주의: 본 실험은 self-contained 설계라 gold 근거가 항상 투입되므로\n")
+        fh.write("#       E4(Retrieval/Grounding Failure)는 구조적으로 발생하지 않는다(실측 0건).\n")
+        fh.write("# error_type 기입 → 2주 경과 → error_type_r2 기입 → --kappa 로 Cohen's κ 산출.\n")
+        w = csv.DictWriter(fh, fieldnames=cfields, extrasaction="ignore")
+        w.writeheader()
+        for v in sorted(compact.values(),
+                        key=lambda x: (-x["n_runs"], x["question_id"])):
+            v = dict(v)
+            v["structures"] = ";".join(sorted(v["structures"]))
+            w.writerow(v)
+
     return {
         "abstention": abst,
+        "compact_sheet": {
+            "path": str(compact_path),
+            "n_combinations": len(compact),
+            "n_questions": len({k[0] for k in compact}),
+            "n_runs_covered": sum(v["n_runs"] for v in compact.values()),
+        },
         "failure_patterns": {
             "total": dict(pattern.most_common()),
             "by_structure": {k: dict(v.most_common()) for k, v in pattern_by_struct.items()},
@@ -1189,6 +1231,19 @@ def write_report(res: dict, out_dir: Path) -> Path:
             A("")
     cs = s9["coding_sheet"]
     A(f"**E1~E5 코딩시트**: `{cs['path']}` — 오답 run {cs['n_failure_runs']}건")
+    cp = s9.get("compact_sheet")
+    if cp:
+        A("")
+        A(f"**압축 코딩시트(권장)**: `{cp['path']}` — **{cp['n_combinations']}개 조합**"
+          f"(고유 문항 {cp['n_questions']}개, run {cp['n_runs_covered']}건 전부 포괄)")
+        A("")
+        A("같은 (문항, 예측답) 조합은 오류 유형이 같으므로 한 번만 판단하면 된다. "
+          f"{cp['n_runs_covered']}건을 {cp['n_combinations']}회 판단으로 끝낼 수 있다.")
+        A("")
+        A("> **E4 는 구조적으로 0건이다.** 본 실험은 self-contained 설계로 gold 근거가 항상 "
+          "컨텍스트에 투입되므로 검색 실패가 발생할 수 없다(`gold_chunk_retrieved=False` 실측 "
+          "0건). 이는 M4(1.3배 축소의 원인 오귀속)가 지적한 교란 요인의 직접 증거이기도 하므로, "
+          "4장에 \"E4 = 0(설계상)\" 으로 명시하고 5장 M4 논의와 연결한다.")
     A("")
     A(f"- 상태: {cs['status']}")
     A(f"- Cohen's κ 절차: {cs['kappa_procedure']}")
@@ -1223,22 +1278,40 @@ def write_report(res: dict, out_dir: Path) -> Path:
     A("실제 `task_type` 은 T1 이다. id 는 데이터셋 구축 당시의 잠정 라벨이고 `task_type` 이")
     A("확정 라벨이므로, 부록의 문항 목록에 이 점을 명시하지 않으면 심사에서 혼란을 부른다.")
     A("")
-    A("### T1 정확도 0.200 의 원인 — 추론 실패가 아니라 채점기 결함")
+    A("### T1 정확도 0.200 의 원인 — 추론 실패가 아니라 채점기 결함 (해소됨)")
     A("")
-    A("T1 5문항의 전 구조 오답을 전수 확인한 결과, LangGraph 세 구조가 모두 동일하게 틀린")
-    A("`DART_T1_002`·`DART_T1_003` 은 **모델이 정답 숫자를 맞혔는데 단위 접미사 때문에**")
-    A("오답 처리된 것이었다.")
+    A("T1 5문항의 전 구조 오답을 전수 확인한 결과, LangGraph 네 구조가 모두 동일하게 틀린")
+    A("세 문항은 **모델이 정답을 맞혔는데 단위 처리 때문에** 오답 처리된 것이었다.")
     A("")
     A("```")
-    A("gold  '739,764,256'        (gold_answer_unit='백만원')")
-    A("pred  '739,764,256 백만원'  (LangGraph)  → 채점기가 ×10^6 을 한 번 더 적용 → 오답")
-    A("pred  '739764256'          (CrewAI)      → 스케일 미적용 → 정답")
+    A("DART_T1_002  gold '739,764,256' (unit=백만원)")
+    A("             pred '739,764,256 백만원'  → ×10^6 을 한 번 더 적용 → 오답이었음")
+    A("             pred '739764256' (CrewAI)  → 스케일 미적용 → 정답이었음")
+    A("")
+    A("DART_T3_006  gold '283,180.52'  (unit=억원)")
+    A("             pred '28,318,052 백만원'   → 283,180.52억원 = 28,318,052백만원 = 28.318조원")
+    A("             즉 모델이 단위를 **올바로 환산**했는데 오답 처리되었다")
     A("```")
     A("")
-    A("즉 **T1 의 구조 간 격차(CrewAI 0.667 vs LangGraph 0.200)는 추론 능력 차이가 아니라")
-    A("답의 표기 양식이 채점기를 통과하는지 여부**였다. 상세와 전 실험 영향은")
-    A("`단위정합_재채점_영향.md` 에 있다. 이는 논문 4.2·4.5·6장의 T1 해석과 m4(파레토 지배")
-    A("표현)의 근거를 직접 바꾼다.")
+    A("`metrics._apply_declared_magnitude` 로 수정하고 전 실험을 재채점했다(LLM 재호출 없음).")
+    A("결과는 아래와 같이 **논문의 T1 서술을 뒤집는다**.")
+    A("")
+    A("| 구조 | T1 (수정 전) | T1 (수정 후) |")
+    A("|---|---|---|")
+    A("| 실험 1 CrewAI | 0.667 | 0.667 |")
+    A("| 실험 0 무검증 | 0.200 | **0.800** |")
+    A("| 실험 2 항상검증 | 0.200 | **0.800** |")
+    A("| 실험 3 캐스케이드 | 0.200 | **0.800** |")
+    A("| 실험 4 self-probe | 0.200 | **0.800** |")
+    A("")
+    A("> 논문 4.2·4.5·6장의 \"T1 에서 CrewAI 가 LangGraph 두 구조보다 0.467 높다 → 역할 기반")
+    A("> 위임이 특정 결합형 과업에서 그래프 구조보다 견고할 수 있다\" 는 **성립하지 않는다.**")
+    A("> 수정 후에는 오히려 LangGraph 가 0.133 높다. 해당 문단과 m4(파레토 지배 표현)의")
+    A("> \"T1 은 전 유형 지배가 아님\" 근거를 모두 삭제·교체해야 한다.")
+    A(">")
+    A("> 아울러 **T1 은 더 이상 최저 정확도 유형이 아니다.** 수정 후 최저는 T4(0.683~0.750)이며,")
+    A("> 이는 3.3.3 의 데이터셋 설계 의도(T1=단일 추출 baseline, T4=다단계 추론)와 정합한다.")
+    A("> 수정 전에는 가장 쉬운 유형이 가장 낮게 나오는 모순이 있었다 — 결함의 방증이다.")
     A("")
     A(f"T1 문항 {s10['n_t1_questions']}개의 전 구조 판정 로그: `{s10['log_path']}`")
     A("")

@@ -84,6 +84,42 @@ def test_percent_unit_blocks_false_scale():
     assert is_correct("44.9", "44.9%", unit="%").correct
 
 
+# ---- (a-2) 선언 자릿수 단위 정합 (백만원 이중 적용 회귀) ----
+def test_declared_magnitude_unit_reconcile():
+    """gold_answer_unit 이 자릿수 단위면 접미사 없는 쪽을 그 단위로 해석한다.
+
+    회귀 근거: K-DART gold 는 공시 원표의 단위로 표기된 맨숫자다. 이 처리가 없으면
+    모델이 같은 값을 단위까지 붙여 답할 때 배수가 두 번 적용되어, 숫자를 맞히고도
+    오답이 된다(DART_T1_002·DART_T1_003 — 네 구조 전부가 이 이유로 오답 처리되었다).
+    """
+    # 같은 값을 단위까지 붙여 답한 경우 → 정답 (수정 전에는 10^6 배 어긋나 오답이었다)
+    assert is_correct("739,764,256", "739,764,256 백만원", unit="백만원").correct
+    assert is_correct("2,326,663", "2,326,663 백만원", unit="백만원").correct
+    # 단위를 붙이지 않은 답의 기존 판정은 바뀌지 않는다
+    assert is_correct("739,764,256", "739764256", unit="백만원").correct
+    # 원 단위로 환산해 답해도 절대 크기가 같으면 정답
+    assert is_correct("739,764,256", "739,764,256,000,000원", unit="백만원").correct
+    # 억원도 동일하게 동작
+    assert is_correct("1,234", "1,234 억원", unit="억원").correct
+    # 선언 단위와 다른 자릿수 단위로 **올바르게 환산해** 답한 경우도 정답
+    # (DART_T3_006 회귀: gold 283,180.52억원 = pred 28,318,052백만원 = 28.318조원)
+    assert is_correct("283,180.52", "28,318,052 백만원", unit="억원").correct
+
+
+def test_declared_magnitude_unit_does_not_loosen_scoring():
+    """선언 단위 정합은 진짜 단위·배율 오류를 정답으로 만들지 않는다."""
+    # 환산 배수가 어긋나면(100배 초과) 오답 유지
+    assert not is_correct("283,180.52", "28,318,052 억원", unit="억원").correct
+    assert not is_correct("2,326,663", "23,266,630 백만원", unit="백만원").correct
+    # 선언 단위와 다른 자릿수 단위를 붙이면 배수가 어긋나 오답
+    assert not is_correct("1,234", "1,234 백만원", unit="억원").correct
+    # 자릿수 단위가 아닌 선언 단위(개·원)는 기존 동작 그대로
+    assert is_correct("100", "100개", unit="개").correct
+    assert not is_correct("(801)", "6,690원", unit="원").correct
+    # unit 미지정이면 종전과 동일 (gold 가 절대 크기인 기존 케이스 보존)
+    assert is_correct("1234000000", "1,234백만원").correct
+
+
 # ---- (b) 부호 불일치: 자동 정답 금지, judge_flag 로만 표시 ----
 def test_sign_mismatch_flags_not_correct():
     # finqa: gold 음수(감소) vs pred 절댓값 퍼센트 → 오답이되 검토 플래그

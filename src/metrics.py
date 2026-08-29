@@ -48,21 +48,30 @@ _MAGNITUDE_UNITS = [
 _PLAIN_UNITS = ["%pt", "%p", "%", "배", "개", "명", "건", "회", "점", "pt", "x", "X"]
 
 
-def _normalize_number_ex(s) -> tuple[float | None, bool]:
-    """문자열을 단위 정규화하여 (float|None, is_percent) 로 반환.
+# 자릿수 단위 이름 → 배수. 선언 단위(gold_answer_unit) 정합 판정에 쓴다.
+MAGNITUDE_UNIT_SCALES = dict(_MAGNITUDE_UNITS)
+
+
+def _normalize_number_ex(s) -> tuple[float | None, bool, str | None]:
+    """문자열을 단위 정규화하여 (float|None, is_percent, own_magnitude_unit) 로 반환.
 
     is_percent 는 값이 **명시적 퍼센트 표기**('...%')였는지 여부. 단 '%pt'/'%p'(퍼센트
     포인트)는 차이값이라 비율 환산 대상이 아니므로 is_percent=False 로 둔다. 이 플래그로
     비교 단계에서 비율 소수↔퍼센트 100배 스케일 정합을 안전하게 판단한다.
 
-    예: '44.9%'->(44.9,True), '15.65%'->(15.65,True), '0.15653'->(0.15653,False),
-        '5%pt'->(5.0,False), '1,234백만원'->(1.234e9,False)
+    own_magnitude_unit 은 **문자열 자신이 달고 있던** 자릿수 단위(백만원 등) 또는 None.
+    선언 단위와의 정합 판정에 쓴다 — 자기 접미사가 없는 쪽은 선언 단위로 표현된 것으로
+    해석해야 하기 때문이다(is_correct 의 선언 단위 정합 참고).
+
+    예: '44.9%'->(44.9,True,None), '15.65%'->(15.65,True,None),
+        '0.15653'->(0.15653,False,None), '5%pt'->(5.0,False,None),
+        '1,234백만원'->(1.234e9,False,'백만원')
     """
     if s is None:
-        return None, False
+        return None, False, None
     t = str(s).strip()
     if t == "":
-        return None, False
+        return None, False, None
     t = _ascii_symbols(t)   # 유니코드 기호 정규화(U+2212 등)
     t = t.replace(",", "").replace(" ", "")
     t = t.replace("₩", "").replace("$", "")
@@ -70,10 +79,12 @@ def _normalize_number_ex(s) -> tuple[float | None, bool]:
 
     scale = 1.0
     is_percent = False
+    own_unit = None
     for unit, mult in _MAGNITUDE_UNITS:
         if t.endswith(unit):
             t = t[: -len(unit)]
             scale = mult
+            own_unit = unit
             break
     else:
         for unit in _PLAIN_UNITS:
@@ -85,11 +96,11 @@ def _normalize_number_ex(s) -> tuple[float | None, bool]:
 
     m = re.search(r"[-+]?\d*\.?\d+", t)
     if not m:
-        return None, False
+        return None, False, None
     try:
-        return float(m.group()) * scale, is_percent
+        return float(m.group()) * scale, is_percent, own_unit
     except ValueError:
-        return None, False
+        return None, False, None
 
 
 def normalize_number(s) -> float | None:
@@ -176,14 +187,41 @@ def _sign_only_mismatch(gn: float, g_pct: bool, pn: float, p_pct: bool) -> bool:
     return False
 
 
+def _apply_declared_magnitude(value, own_unit, unit):
+    """선언 단위 정합 — 자기 접미사가 없는 값은 **선언 단위로 표현된 것**으로 해석한다.
+
+    K-DART-QA 의 gold 는 공시 원표의 단위로 표기된 맨숫자다(예: gold '739,764,256',
+    gold_answer_unit '백만원' → 실제 금액 739,764,256백만원). 따라서 접미사가 없는 값에
+    선언 단위의 배수를 곱해야 양쪽이 같은 절대 크기가 된다.
+
+    이 처리가 없으면 모델이 같은 값을 단위까지 붙여 `739,764,256 백만원` 으로 답할 때
+    _normalize_number_ex 가 배수를 **한 번 더** 곱해 10^6 배 틀린 값이 되고, 숫자를 맞히고도
+    오답이 된다. 반대로 단위를 붙이지 않은 답은 그대로 정답이 되어, 판정이 추론이 아니라
+    **답의 표기 양식**에 좌우된다.
+
+    PERCENT_UNITS 에 대해 이미 하고 있던 "gold 가 이미 그 단위로 표현되어 있다"는 처리를
+    자릿수 단위로 확장한 것이며, 채점을 느슨하게 만들지 않는다 — 접미사를 **다르게** 붙인
+    진짜 단위 오류는 배수가 어긋나므로 계속 오답으로 남는다.
+    """
+    if value is None or own_unit is not None:
+        return value                       # 자기 단위가 있으면 이미 절대 크기다
+    scale = MAGNITUDE_UNIT_SCALES.get(unit)
+    if not scale or scale == 1.0:          # 선언 단위가 자릿수 단위가 아니거나 '원'(배수 1)
+        return value
+    return value * scale
+
+
 def is_correct(gold, pred, unit: str | None = None) -> Judgement:
     """gold 와 pred 의 정답 일치 판정. unit 으로 텍스트/수치 분기."""
     # 단위 메타로 텍스트형 강제
     force_text = unit in TEXT_UNITS if unit else False
 
     if not force_text:
-        gn, g_pct = _normalize_number_ex(gold)
-        pn, p_pct = _normalize_number_ex(pred)
+        gn, g_pct, g_unit = _normalize_number_ex(gold)
+        pn, p_pct, p_unit = _normalize_number_ex(pred)
+        # 선언 단위가 자릿수 단위면 양쪽을 같은 절대 크기로 맞춘다.
+        gn = _apply_declared_magnitude(gn, g_unit, unit)
+        pn = _apply_declared_magnitude(pn, p_unit, unit)
         # gold 단위가 퍼센트면 gold 는 이미 퍼센트 크기(비율 소수 아님) → ×100 오인 방지.
         if unit in PERCENT_UNITS:
             g_pct = True
