@@ -712,8 +712,29 @@ def section9(data: dict[str, list[dict]], out_dir: Path) -> dict:
                 })
                 n_rows += 1
 
+    # 결정적 오답 패턴 사전집계 — 라벨이 아니라 저자 분류의 출발점으로 쓴다.
+    import collections as _c
+    pattern = _c.Counter()
+    pattern_by_struct = _c.defaultdict(_c.Counter)
+    with open(sheet_path, encoding="utf-8-sig") as fh:
+        _lines = [ln for ln in fh if not ln.startswith("#")]
+    for _r in csv.DictReader(_lines):
+        rel = (_r.get("scale_relation") or "").strip()
+        if rel.startswith("비율 "):
+            key = "기타 수치 불일치"
+        elif rel == "":
+            key = "비수치 답(텍스트형 등)"
+        else:
+            key = rel
+        pattern[key] += 1
+        pattern_by_struct[_r["structure"]][key] += 1
+
     return {
         "abstention": abst,
+        "failure_patterns": {
+            "total": dict(pattern.most_common()),
+            "by_structure": {k: dict(v.most_common()) for k, v in pattern_by_struct.items()},
+        },
         "coding_sheet": {
             "path": str(sheet_path),
             "n_failure_runs": n_rows,
@@ -1145,6 +1166,27 @@ def write_report(res: dict, out_dir: Path) -> Path:
     A("> `INSUFFICIENT_EVIDENCE` 로 정당하게 기권한 사례다. 4.2 서술을 정정하고, m7(한·영 교란)")
     A("> 논의에서 \"기권이 영어에서만 나타난다\"는 근거로 쓰지 않아야 한다.")
     A("")
+    fp = s9.get("failure_patterns")
+    if fp:
+        A("### 오답의 결정적 패턴 사전집계")
+        A("")
+        A("답과 정답의 수치 관계만으로 결정적으로 판별되는 패턴이다. **라벨이 아니라**")
+        A("저자 분류의 출발점으로 쓴다.")
+        A("")
+        A("| 패턴 | 건수 |")
+        A("|---|---|")
+        for k, v in fp["total"].items():
+            A(f"| {k} | {v} |")
+        A("")
+        n_sign = sum(v for k, v in fp["total"].items() if "부호반전" in k)
+        if n_sign:
+            A(f"> **부호 반전이 {n_sign}건으로 최대 단일 패턴이다.** 크기는 맞고 부호만")
+            A("> 다른 경우로, 채점기는 이를 자동 정답 처리하지 않고 `judge_flag` 로만 남긴다")
+            A("> (증감 방향은 실질적 의미 차이라는 설계 판단). \"몇 % 감소했는가\" 에 모델이")
+            A("> 양수로 답한 사례가 다수이므로, **질문의 부호 규약을 프롬프트에 명시할지**")
+            A("> 아니면 **오답으로 유지할지**를 저자가 정해야 한다. 어느 쪽이든 그 판단을")
+            A("> 3.2 채점 기준에 명문화해야 한다 — 현재 논문에는 이 규약이 서술되어 있지 않다.")
+            A("")
     cs = s9["coding_sheet"]
     A(f"**E1~E5 코딩시트**: `{cs['path']}` — 오답 run {cs['n_failure_runs']}건")
     A("")
