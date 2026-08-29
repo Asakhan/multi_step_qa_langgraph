@@ -45,7 +45,23 @@ class AgentState(TypedDict, total=False):
     confidence: float                          # 유효 신뢰도 0~1 (gate 입력; 보조신호 보정 후)
     confidence_self_report: float              # 모델 원자기보고 신뢰도(보정 전, 분석/H3용)
     code_conflict: bool                        # 추론답 vs 코드실행답 불일치(보조신호) 감지 여부
+
+    # --- self-probe 신뢰도 캐스케이드(S6, 실험 3 개선안) ---
+    probe_confidence: float                    # self-probe n_samples 중 True 비율(0~1)
+    probe_votes: list[int]                     # self-probe 샘플별 True(1)/False(0) 원자료
     gate_decision: str                         # "stop"(확신→END) | "escalate"(불확실→verify)
+
+    # --- 반사실 게이트 재현(S7, 실험 C) — 1차 생성 스냅샷 ---
+    # S7 은 게이트 없이 verify 를 전수 실행하되, 게이트가 'stop' 했을 때의 결과를 사후
+    # 재구성할 수 있도록 1차 생성 시점의 답과 신호를 그대로 보존한다. 이 스냅샷이 있으면
+    # 임의의 게이트 정책(자기보고/학습라우터/무작위/oracle)의 성능을 추가 LLM 호출 없이
+    # 계산할 수 있다(반사실 게이트 재현, counterfactual gate replay).
+    first_answer: str
+    first_reasoning: str
+    first_expressions: list[str]
+    first_confidence_self: float
+    first_code_conflict: bool
+    first_snapshot_taken: bool
 
     # --- 분해/해결(S4) ---
     sub_questions: list[str]
@@ -81,7 +97,15 @@ def new_state(query: str, *, dataset: str, question_id: str, task_type: str, lan
         confidence=0.0,
         confidence_self_report=0.0,
         code_conflict=False,
+        probe_confidence=0.0,
+        probe_votes=[],
         gate_decision="",
+        first_answer="",
+        first_reasoning="",
+        first_expressions=[],
+        first_confidence_self=0.0,
+        first_code_conflict=False,
+        first_snapshot_taken=False,
         sub_questions=[],
         sub_answers=[],
         token_usage=[],

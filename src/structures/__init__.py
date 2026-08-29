@@ -17,6 +17,10 @@ def build_graph(structure: str):
         from .s4 import build
     elif structure == "s5":
         from .s5 import build
+    elif structure == "s6":
+        from .s6 import build
+    elif structure == "s7":
+        from .s7 import build
     else:
         raise ValueError(f"알 수 없는 구조: {structure}")
     return build()

@@ -50,6 +50,17 @@ structures:
     # 실험 3(동적 신뢰도 캐스케이드). 본실험은 gemini-2.5-flash 단일 모델(논문 3.2.1).
     generate: gemini_flash
     verify: gemini_flash
+  s6:
+    # 실험 3 개선안(self-probe 신뢰도 캐스케이드). generate/verify 는 s5 와 동일 모델 통제.
+    # probe(self_probe 노드)도 동일 모델(gemini_flash)이나 temperature>0 오버라이드로 호출된다.
+    generate: gemini_flash
+    probe: gemini_flash
+    verify: gemini_flash
+  s7:
+    # 실험 C(반사실 게이트 재현 기반 구조). 생성은 s5 와 동일 프롬프트/모델, 검증은 전수 실행.
+    # 모델 통제는 s2/s5 와 동일(gemini-2.5-flash 단일 모델, 논문 3.2.1) — 게이트 정책만 사후 변수.
+    generate: gemini_flash
+    verify: gemini_flash
   s3:
     gen_gemini: gemini_flash      # 다수결 tie 시 우선순위 = Executor(gemini_flash)
     gen_gpt: gpt4o_mini

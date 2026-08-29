@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, asdict
+from pathlib import Path
 from functools import lru_cache
 
 from . import config
@@ -23,7 +24,7 @@ CONFIG = config.experiment_cfg()
 @dataclass
 class Question:
     qid: str
-    dataset: str            # 'finqa' | 'kdart'
+    dataset: str            # 'finqa' | 'finqa_ext' | 'kdart'
     lang: str               # 'en' | 'ko'
     task_type: str          # T1~T5
     orig_task_type: str
@@ -42,8 +43,13 @@ class Question:
         return d
 
 
-def _load_finqa() -> list[Question]:
-    path = CONFIG["datasets"]["finqa"]["questions_jsonl"]
+def _load_finqa(key: str = "finqa") -> list[Question]:
+    """FinQA 계열 로더. key='finqa'(기존 20문항) | 'finqa_ext'(확대 80문항).
+
+    두 파일은 스키마가 동일하므로 같은 로더를 쓴다. dataset 필드를 key 로 두어 확대분이
+    기존 표본과 **분리 집계**되게 한다(기존 60문항 실험의 재현성 보존).
+    """
+    path = CONFIG["datasets"][key]["questions_jsonl"]
     out: list[Question] = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -54,7 +60,7 @@ def _load_finqa() -> list[Question]:
             tt = r.get("task_type", "T?")
             out.append(Question(
                 qid=r["id"],
-                dataset="finqa",
+                dataset=key,
                 lang="en",
                 task_type=tt,
                 orig_task_type=tt,
@@ -65,7 +71,8 @@ def _load_finqa() -> list[Question]:
                 evidence_chunks=list(r.get("evidence_chunks") or []),
                 reasoning_hops=r.get("n_steps"),
                 context_chunks=list(r.get("context_chunks") or []),
-                source={"n_steps": r.get("n_steps")},
+                source={"n_steps": r.get("n_steps"),
+                        "difficulty_stratum": r.get("difficulty_stratum")},
             ))
     return out
 
@@ -103,13 +110,22 @@ def _load_kdart() -> list[Question]:
 
 @lru_cache(maxsize=1)
 def load_questions() -> list[Question]:
-    return _load_finqa() + _load_kdart()
+    """기존 60문항(finqa 20 + kdart 40) + 확대분(finqa_ext 80, 파일이 있으면).
+
+    확대분은 별도 dataset 키로 실리므로, runner 의 --datasets 로 명시하지 않으면
+    기존 실험에 섞이지 않는다.
+    """
+    qs = _load_finqa("finqa") + _load_kdart()
+    ext_path = Path(CONFIG["datasets"].get("finqa_ext", {}).get("questions_jsonl", ""))
+    if str(ext_path) and ext_path.exists():
+        qs += _load_finqa("finqa_ext")
+    return qs
 
 
 def questions_by_dataset() -> dict[str, list[Question]]:
-    out: dict[str, list[Question]] = {"finqa": [], "kdart": []}
+    out: dict[str, list[Question]] = {"finqa": [], "finqa_ext": [], "kdart": []}
     for q in load_questions():
-        out[q.dataset].append(q)
+        out.setdefault(q.dataset, []).append(q)
     return out
 
 

@@ -84,7 +84,8 @@ def main(argv=None):
     ap.add_argument("--structures", nargs="+", required=True)
     ap.add_argument("--run-s0", action="store_true")
     ap.add_argument("--runs", type=int, default=config.experiment_cfg()["repetition"]["runs_per_question"])
-    ap.add_argument("--datasets", nargs="+", default=["finqa", "kdart"], choices=["finqa", "kdart"])
+    ap.add_argument("--datasets", nargs="+", default=["finqa", "kdart"],
+                    choices=["finqa", "finqa_ext", "kdart"])
     ap.add_argument("--limit-per-dataset", type=int, default=None)
     ap.add_argument("--no-final-analysis", action="store_true")
     args = ap.parse_args(argv)

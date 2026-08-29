@@ -55,12 +55,12 @@ _REASONING_KEYS = {"o3", "o4_mini"}
 
 
 @lru_cache(maxsize=None)
-def _chat_model(logical_key: str):
-    """provider 에 맞는 LangChain chat 모델을 생성(캐시).
+def _chat_model(logical_key: str, temperature: float = 0.0):
+    """provider 에 맞는 LangChain chat 모델을 생성(캐시, (logical_key, temperature) 키).
 
-    논문 3.2.1 통제: temperature=0 으로 생성 무작위성을 제거한다(결정적 디코딩).
-    본실험(실험2=s2, 실험3=s5)은 gemini_flash 단일 모델만 쓰므로 google 경로만
-    실제 작동하면 되지만, 통제는 모든 provider 에 일관 적용한다.
+    논문 3.2.1 통제: 본실험(S0~S5)의 답변 생성 호출은 모두 temperature=0(결정적 디코딩)
+    이며 이 기본값은 그대로 유지된다. S6(개선안 — self-probe 신뢰도) 의 확률적 신뢰도
+    산출 노드에서만 call_with_temperature 를 통해 temperature>0 오버라이드를 허용한다.
     """
     provider = config.model_provider(logical_key)
     model = config.model_string(logical_key)
@@ -68,19 +68,17 @@ def _chat_model(logical_key: str):
 
     if provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
-        # 논문 3.2.1 통제: temperature=0
-        return ChatGoogleGenerativeAI(model=model, temperature=0, timeout=timeout, max_retries=0)
+        return ChatGoogleGenerativeAI(model=model, temperature=temperature, timeout=timeout, max_retries=0)
     if provider == "openai":
         from langchain_openai import ChatOpenAI
-        # 논문 3.2.1 통제: temperature=0. 단 o3 등 reasoning 모델은 temperature
-        # 커스터마이즈가 불가하므로 기본값을 유지(제외).
+        # o3 등 reasoning 모델은 temperature 커스터마이즈가 불가하므로 기본값을 유지(제외).
         if logical_key in _REASONING_KEYS:
             return ChatOpenAI(model=model, timeout=timeout, max_retries=0)
-        return ChatOpenAI(model=model, temperature=0, timeout=timeout, max_retries=0)
+        return ChatOpenAI(model=model, temperature=temperature, timeout=timeout, max_retries=0)
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
-        # 논문 3.2.1 통제: temperature=0. ChatAnthropic 은 max_tokens 필수(넉넉히 4096).
-        return ChatAnthropic(model=model, temperature=0, timeout=timeout, max_retries=0, max_tokens=4096)
+        # ChatAnthropic 은 max_tokens 필수(넉넉히 4096).
+        return ChatAnthropic(model=model, temperature=temperature, timeout=timeout, max_retries=0, max_tokens=4096)
     raise config.ConfigError(f"알 수 없는 provider: {provider} (logical_key={logical_key})")
 
 
@@ -114,15 +112,20 @@ def _text_of(resp) -> str:
     return str(content)
 
 
-def call(logical_key: str, system_prompt: str, user_message: str, node_name: str) -> LLMResult:
-    """단일 LLM 호출(지수 백오프 재시도 포함). 토큰 계측 결과를 LLMResult 로 반환."""
+def call_with_temperature(logical_key: str, system_prompt: str, user_message: str,
+                           node_name: str, temperature: float = 0.0) -> LLMResult:
+    """단일 LLM 호출(지수 백오프 재시도 포함), temperature 오버라이드 가능.
+
+    본실험(S0~S5)은 temperature=0(기본값)만 쓴다. S6 의 self-probe 노드가 확률적
+    신뢰도(여러 샘플 중 True 비율)를 얻기 위해 temperature>0 을 명시적으로 넘긴다.
+    """
     from langchain_core.messages import SystemMessage, HumanMessage
 
     rb = config.experiment_cfg()["robustness"]
     max_retries = int(rb["max_retries"])
     base = float(rb["backoff_base_seconds"])
 
-    model = _chat_model(logical_key)
+    model = _chat_model(logical_key, temperature)
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_message)]
 
     last_exc: Exception | None = None
@@ -146,3 +149,8 @@ def call(logical_key: str, system_prompt: str, user_message: str, node_name: str
     raise RuntimeError(
         f"LLM 호출 영구 실패 (logical_key={logical_key}, node={node_name}): {last_exc}"
     ) from last_exc
+
+
+def call(logical_key: str, system_prompt: str, user_message: str, node_name: str) -> LLMResult:
+    """단일 LLM 호출(temperature=0 고정, 본실험 S0~S5 통제). 지수 백오프 재시도 포함."""
+    return call_with_temperature(logical_key, system_prompt, user_message, node_name, temperature=0.0)

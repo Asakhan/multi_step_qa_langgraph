@@ -128,6 +128,38 @@ def run_one(graph, structure: str, q: Question, run_index: int) -> dict:
     retrieved = final.get("retrieved_evidence", [])
     retrieved_ids = [c.get("chunk_id", "") for c in retrieved]
 
+    # --- 실험 C(S7) 반사실 게이트 재현용 부가 로깅 ---
+    # 1차 생성 스냅샷을 남기는 구조(S7)에서는 "게이트가 stop 했을 때의 결과"를 사후
+    # 계산할 수 있어야 한다. 그러려면 (i) 1차 답의 정오답과 (ii) 호출 단위 토큰 시퀀스
+    # (generate 1차 / verify / generate 재생성)가 필요하다. 다른 구조에서는 first_answer
+    # 가 비어 있으므로 아래 필드가 모두 None/빈 값이 되어 기존 스키마와 충돌하지 않는다.
+    first_answer = final.get("first_answer", "")
+    first_extra: dict = {}
+    if final.get("first_snapshot_taken"):
+        fj = metrics.is_correct(q.gold_answer, first_answer, q.gold_answer_unit)
+        first_it, first_ot = metrics.run_tokens(_first_gen_records(token_usage))
+        first_extra = {
+            "first_answer": first_answer,
+            "first_reasoning": final.get("first_reasoning", ""),
+            "first_expressions": final.get("first_expressions", []),
+            "first_confidence_self": final.get("first_confidence_self", 0.0),
+            "first_code_conflict": final.get("first_code_conflict", False),
+            "first_success": int(fj.correct),
+            "first_judge_flag": fj.judge_flag,
+            "first_judge_mode": fj.mode,
+            "first_input_tokens": first_it,
+            "first_output_tokens": first_ot,
+            "first_total_tokens": first_it + first_ot,
+            "first_cost": metrics.run_cost(_first_gen_records(token_usage)),
+            # 호출 단위 시퀀스(노드명·토큰) — 정책별 비용 재구성의 원자료
+            "token_usage_seq": [
+                {"node": r["node"], "model": r.get("model", ""),
+                 "input_tokens": r["input_tokens"], "output_tokens": r["output_tokens"]}
+                for r in token_usage
+            ],
+            "node_latency_seq": list(final.get("node_latencies", []) or []),
+        }
+
     return {
         "run_id": run_id,
         "structure": structure,
@@ -161,18 +193,37 @@ def run_one(graph, structure: str, q: Question, run_index: int) -> dict:
         "retry_count": final.get("retry_count", 0),
         "verify_verdict": final.get("verify_verdict", ""),
         "critique": final.get("critique", ""),
-        # 실험3(S5) 게이트 신호 — H3 보조가설(게이트 발동 집합 vs 실제 오답 집합) 비교용
+        # 실험3(S5/S6) 게이트 신호 — H3 보조가설(게이트 발동 집합 vs 실제 오답 집합) 비교용
         "confidence": final.get("confidence", 0.0),                       # 유효(보정 후) — gate 입력
-        "confidence_self_report": final.get("confidence_self_report", 0.0),  # 모델 원자기보고
+        "confidence_self_report": final.get("confidence_self_report", 0.0),  # S5: 모델 원자기보고
         "code_conflict": final.get("code_conflict", False),              # 보조신호: 추론답 vs 코드실행답 충돌
         "gate_decision": final.get("gate_decision", ""),
         "escalated": final.get("gate_decision", "") == "escalate",
+        # S6(self-probe 신뢰도 캐스케이드) 전용
+        "probe_confidence": final.get("probe_confidence", None),         # self-probe True 비율
+        "probe_votes": final.get("probe_votes", None),                   # 샘플별 True(1)/False(0)
         "sub_questions": final.get("sub_questions", []),
         "sub_answers": final.get("sub_answers", []),
         "aggregation_info": final.get("aggregation_info", {}),
         "timestamp": _now_iso(),
         "run_error": "",
+        **first_extra,
     }
+
+
+def _first_gen_records(token_usage: list[dict]) -> list[dict]:
+    """토큰 기록 시퀀스에서 **1차 generate 호출분만** 잘라낸다.
+
+    S7 그래프의 호출 순서는 generate(1차) -> verify -> [generate(재생성)] 이므로,
+    첫 verify 기록이 나오기 전까지가 1차 생성 비용이다(JSON 파싱 재호출도 1차에 포함 —
+    실제 과금되었으므로 무검증 시나리오의 비용에 정당하게 귀속된다).
+    """
+    out = []
+    for r in token_usage:
+        if r["node"] == "verify":
+            break
+        out.append(r)
+    return out
 
 
 def _cumulative_cost(structure: str) -> float:
@@ -339,7 +390,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="단일 구조 실행")
     ap.add_argument("--structure", required=True, choices=config.ALL_STRUCTURES)
     ap.add_argument("--runs", type=int, default=EXP["repetition"]["runs_per_question"])
-    ap.add_argument("--datasets", nargs="+", default=["finqa", "kdart"], choices=["finqa", "kdart"])
+    ap.add_argument("--datasets", nargs="+", default=["finqa", "kdart"],
+                    choices=["finqa", "finqa_ext", "kdart"])
     ap.add_argument("--limit-per-dataset", type=int, default=None,
                     help="회귀 검증용: 데이터셋별 N문항만")
     ap.add_argument("--no-email", action="store_true")

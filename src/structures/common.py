@@ -7,7 +7,9 @@ user 메시지에만 주입된다(저자 명세: "{...} 표기는 user 메시지
 from __future__ import annotations
 
 import json
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
 from .. import config, llm_clients, metrics, tools
@@ -101,6 +103,30 @@ def call_json(logical_key: str, prompt_name: str, slots: dict, node_name: str):
             return parsed, records
         if _is_abstention(res.text):
             return dict(_ABSTENTION), records
+        last_text = res.text
+    raise JSONParseError(
+        f"JSON 파싱 실패 (node={node_name}, model={logical_key}): {last_text!r:.200}")
+
+
+def call_json_with_temperature(logical_key: str, prompt_name: str, slots: dict,
+                                node_name: str, temperature: float):
+    """call_json 과 동일하나 temperature 를 오버라이드한다(S6 self-probe 전용).
+
+    본실험(S0~S5)의 답변 생성 호출은 이 함수를 쓰지 않는다(항상 temperature=0).
+    """
+    system_part, inputs_template = _split_prompt(prompt_name)
+    user_message = inputs_template.format(**slots)
+    json_retries = int(_EXP["robustness"]["json_parse_retries"])
+
+    records = []
+    last_text = None
+    for _ in range(json_retries + 1):
+        res = llm_clients.call_with_temperature(logical_key, system_part, user_message,
+                                                 node_name, temperature=temperature)
+        records.append(res.token_record())
+        parsed = _extract_json(res.text)
+        if parsed is not None:
+            return parsed, records
         last_text = res.text
     raise JSONParseError(
         f"JSON 파싱 실패 (node={node_name}, model={logical_key}): {last_text!r:.200}")
@@ -223,6 +249,36 @@ def make_generate_s5_node(structure: str, role: str = "generate", node_name: str
     return generate_s5_node
 
 
+def make_generate_s7_node(structure: str, role: str = "generate", node_name: str = "generate"):
+    """generate (S7, 실험 C — 반사실 게이트 재현용).
+
+    make_generate_s5_node 와 완전히 동일한 생성 동작(generate_s5.txt, 자기보고 confidence,
+    code_conflict 보정)을 하되, **1차 생성(retry_count==0)의 답과 신호를 스냅샷으로 보존**한다.
+
+    왜 필요한가: S7 은 게이트를 두지 않고 verify 를 전수 실행한다. 그러면 "게이트가 stop
+    했을 때의 결과"(=1차 생성 답)와 "escalate 했을 때의 결과"(=검증·재생성 후 답)를 같은
+    run 안에서 동시에 관측할 수 있으므로, 임의의 게이트 정책의 정확도·비용을 추가 LLM
+    호출 없이 사후 계산할 수 있다. 스냅샷이 없으면 이 반사실 재구성이 불가능하다.
+
+    기존 구조(S0~S6)의 동작·재현성에는 영향이 없다(별도 빌더).
+    """
+    inner = make_generate_s5_node(structure, role=role, node_name=node_name)
+
+    def generate_s7_node(state):
+        update = inner(state)
+        if not state.get("first_snapshot_taken"):
+            update.update({
+                "first_answer": update.get("final_answer", ""),
+                "first_reasoning": update.get("reasoning_trace", ""),
+                "first_expressions": list(update.get("used_expression", []) or []),
+                "first_confidence_self": float(update.get("confidence_self_report", 0.0) or 0.0),
+                "first_code_conflict": bool(update.get("code_conflict", False)),
+                "first_snapshot_taken": True,
+            })
+        return update
+    return generate_s7_node
+
+
 def make_gate_node(threshold: float):
     """gate (S5, 실험3): generate 자기보고 confidence 를 임계값과 비교해 분기 결정.
     confidence >= threshold → gate_decision='stop'(확신, END),
@@ -239,9 +295,73 @@ def make_gate_node(threshold: float):
     return gate_node
 
 
+def make_self_probe_node(structure: str, n_samples: int, temperature: float,
+                          role: str = "probe", node_name: str = "self_probe"):
+    """self_probe (S6, 실험3 개선안): generate 직후에 실행되는 독립 재확인 노드.
+
+    지도교수 피드백(문헌D: Kadavath et al. 2022 "self-probe") 대응. S5 는 모델이
+    답을 만드는 그 자리에서 스스로 확신도 숫자를 말하게 했는데(generate_s5.txt),
+    실측 결과 그 값이 몇 개 값(약 0.7 / 약 0.95~1.0)에만 몰려 있어(clustering) 임계값을
+    바꿔도 판정이 거의 안 바뀌는 문제가 있었다(작성관리 §3-1). S6 는 그 verbalized
+    number 를 요구하는 대신, "이 답이 맞는지"를 별도 질문으로 temperature>0 에서
+    n_samples 번 독립적으로 다시 묻고, True 로 답한 비율을 신뢰도로 쓴다
+    (self-consistency 를 확신도 신호 자체에 적용 — 답변 생성은 여전히 temperature=0 로
+    통제되어 논문 3.2.1 결정성 통제를 그대로 유지한다).
+
+    code_conflict(결정적 보조신호)는 S5 와 동일하게 유지: 충돌이면 무조건 0.0.
+    """
+    logical = _logical(structure, role)
+
+    def _one_probe_sample(slots: dict):
+        try:
+            parsed, recs = call_json_with_temperature(
+                logical, "self_probe.txt", slots, node_name, temperature=temperature)
+            v = parsed.get("is_correct")
+            if isinstance(v, str):
+                v = v.strip().lower() == "true"
+            return (1 if bool(v) else 0), recs
+        except JSONParseError:
+            return 0, []  # 파싱 실패 표는 보수적으로 "불확실(0)"로 집계
+
+    def self_probe_node(state):
+        t0 = time.perf_counter()
+        slots = {
+            "query": state["query"],
+            "evidence": _evidence_str(state),
+            "candidate_answer": state.get("final_answer", ""),
+            "candidate_reasoning": state.get("reasoning_trace", ""),
+        }
+        records = []
+        votes = []
+        # n_samples 개 독립 확인 질문을 동시에 호출(순차 실행 시 문항당 최대 200초+
+        # 걸리던 지연을 n_samples 배 단축). 통계적 설계(각 샘플이 독립적이라는 전제)는
+        # 순차/병렬 여부와 무관하므로 결과에 영향 없음 — 실행 시간만 줄어든다.
+        with ThreadPoolExecutor(max_workers=n_samples) as pool:
+            for vote, recs in pool.map(lambda _: _one_probe_sample(slots), range(n_samples)):
+                votes.append(vote)
+                records.extend(recs)
+        probe_frac = sum(votes) / len(votes) if votes else 0.0
+        conflict = state.get("code_conflict")
+        eff_conf = 0.0 if conflict is True else probe_frac
+        return {
+            "confidence": eff_conf,          # gate 가 참조 — generate 의 초기값을 덮어씀
+            "probe_confidence": probe_frac,  # self-probe 원신호(True 비율, 분석/비교용)
+            "probe_votes": votes,            # 샘플별 True/False(1/0) 원자료
+            "token_usage": records,
+            "node_latencies": [{"node": node_name, "seconds": time.perf_counter() - t0}],
+        }
+    return self_probe_node
+
+
 def make_verify_node(structure: str):
-    """verify (S2, o3): -> verdict/critique. FAIL 이면 critique 기록."""
+    """verify: -> verdict/critique. FAIL 이면 critique 기록.
+
+    실험 A(검증기 민감도 조작)를 위해 env `VERIFY_PROMPT` 로 검증 프롬프트 파일을
+    교체할 수 있다. 미설정 시 저자 확정본 `verify.txt`(기본 운영점)를 쓴다.
+    프롬프트 외 그래프·모델·채점기는 전부 동일하므로 검증 엄격도만 독립변수가 된다.
+    """
     logical = _logical(structure, "verify")
+    prompt_name = os.environ.get("VERIFY_PROMPT", "").strip() or "verify.txt"
 
     def verify_node(state):
         t0 = time.perf_counter()
@@ -251,7 +371,7 @@ def make_verify_node(structure: str):
             "candidate_answer": state.get("final_answer", ""),
             "candidate_reasoning": state.get("reasoning_trace", ""),
         }
-        parsed, records = call_json(logical, "verify.txt", slots, "verify")
+        parsed, records = call_json(logical, prompt_name, slots, "verify")
         verdict = str(parsed.get("verdict", "FAIL")).upper().strip()
         critique = str(parsed.get("critique", "") or "")
         update = {
