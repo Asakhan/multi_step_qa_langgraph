@@ -21,6 +21,10 @@ def build_graph(structure: str):
         from .s6 import build
     elif structure == "s7":
         from .s7 import build
+    elif structure in ("s7_gpt", "s7_claude", "s7_vpro"):
+        # S7 과 동일 그래프. models.yaml 의 모델 배정만 다르다.
+        from .s7 import build as _build_s7
+        return _build_s7(structure)
     else:
         raise ValueError(f"알 수 없는 구조: {structure}")
     return build()

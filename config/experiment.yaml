@@ -32,6 +32,18 @@ datasets:
     n_questions: 80
     retrieval: per_question_context
     source_dir: data/finqa/FinQA-main
+  tatqa:
+    lang: en
+    # 계획서(2026-09-07)가 약속한 "영어 2종" 중 두 번째. 단일 데이터셋 의존을 피해
+    # 결과가 FinQA 고유 성질이 아님을 보이기 위한 제3 데이터셋이다.
+    # TAT-QA dev 분할의 arithmetic 문항에서 derivation 연산자 수로 난이도 3층을 만들어
+    # 34/33/33 균형 표집. src/prepare_tatqa.py (시드 20260821) 로 생성 → 재현 가능.
+    # scale 이 자릿수 단위인 문항은 질문에 단위를 명시했고(채점기 무변경), percent 만
+    # gold_answer_unit='%' 로 선언한다 — 상세는 prepare_tatqa.py 모듈 주석 참조.
+    questions_jsonl: data/tatqa/tatqa.jsonl
+    n_questions: 100
+    retrieval: per_question_context
+    source_dir: data/tatqa                       # 원천(provenance) — tatqa_dataset_dev.json
   kdart:
     lang: ko
     # FinQA 포맷 자체완결 40문항 (T1~T5). 난이도를 FinQA 수준으로 보정.

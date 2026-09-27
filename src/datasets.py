@@ -24,7 +24,7 @@ CONFIG = config.experiment_cfg()
 @dataclass
 class Question:
     qid: str
-    dataset: str            # 'finqa' | 'finqa_ext' | 'kdart'
+    dataset: str            # 'finqa' | 'finqa_ext' | 'tatqa' | 'kdart'
     lang: str               # 'en' | 'ko'
     task_type: str          # T1~T5
     orig_task_type: str
@@ -44,7 +44,7 @@ class Question:
 
 
 def _load_finqa(key: str = "finqa") -> list[Question]:
-    """FinQA 계열 로더. key='finqa'(기존 20문항) | 'finqa_ext'(확대 80문항).
+    """FinQA 포맷 로더. key='finqa'(20문항) | 'finqa_ext'(80문항) | 'tatqa'(100문항).
 
     두 파일은 스키마가 동일하므로 같은 로더를 쓴다. dataset 필드를 key 로 두어 확대분이
     기존 표본과 **분리 집계**되게 한다(기존 60문항 실험의 재현성 보존).
@@ -116,14 +116,15 @@ def load_questions() -> list[Question]:
     기존 실험에 섞이지 않는다.
     """
     qs = _load_finqa("finqa") + _load_kdart()
-    ext_path = Path(CONFIG["datasets"].get("finqa_ext", {}).get("questions_jsonl", ""))
-    if str(ext_path) and ext_path.exists():
-        qs += _load_finqa("finqa_ext")
+    for key in ("finqa_ext", "tatqa"):
+        path = Path(CONFIG["datasets"].get(key, {}).get("questions_jsonl", ""))
+        if str(path) and path.exists():
+            qs += _load_finqa(key)
     return qs
 
 
 def questions_by_dataset() -> dict[str, list[Question]]:
-    out: dict[str, list[Question]] = {"finqa": [], "finqa_ext": [], "kdart": []}
+    out: dict[str, list[Question]] = {"finqa": [], "finqa_ext": [], "tatqa": [], "kdart": []}
     for q in load_questions():
         out.setdefault(q.dataset, []).append(q)
     return out

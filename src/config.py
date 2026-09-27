@@ -25,7 +25,8 @@ PROMPTS_DIR = ROOT / "src" / "prompts"
 # .env 로드 (있으면). 없으면 OS 환경변수만 사용.
 load_dotenv(ROOT / ".env")
 
-ALL_STRUCTURES = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"]
+ALL_STRUCTURES = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
+                  "s7_gpt", "s7_claude", "s7_vpro"]
 
 # 구조별로 실제 호출에 필요한 provider (필수 env 키 검증에 사용)
 _PROVIDER_KEY_ENV = {

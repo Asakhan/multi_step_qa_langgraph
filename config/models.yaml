@@ -61,6 +61,19 @@ structures:
     # 모델 통제는 s2/s5 와 동일(gemini-2.5-flash 단일 모델, 논문 3.2.1) — 게이트 정책만 사후 변수.
     generate: gemini_flash
     verify: gemini_flash
+  s7_gpt:
+    # H6(기반 모델 간 일반화) 검정용. S7 과 그래프/프롬프트 동일, 모델만 gpt-4o-mini.
+    generate: gpt4o_mini
+    verify: gpt4o_mini
+  s7_claude:
+    # H6 검정용. S7 과 그래프/프롬프트 동일, 모델만 claude-haiku-4.5.
+    generate: claude_haiku
+    verify: claude_haiku
+  s7_vpro:
+    # 실험 D(상위 모델 검증기). 생성은 본실험과 동일(gemini-2.5-flash)로 고정하고
+    # 검증기만 상위 모델로 교체하여, 검증기의 판별 능력이 병목인지 분리 검정한다.
+    generate: gemini_flash
+    verify: claude_sonnet
   s3:
     gen_gemini: gemini_flash      # 다수결 tie 시 우선순위 = Executor(gemini_flash)
     gen_gpt: gpt4o_mini

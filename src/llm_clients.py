@@ -77,8 +77,12 @@ def _chat_model(logical_key: str, temperature: float = 0.0):
         return ChatOpenAI(model=model, temperature=temperature, timeout=timeout, max_retries=0)
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
-        # ChatAnthropic 은 max_tokens 필수(넉넉히 4096).
-        return ChatAnthropic(model=model, temperature=temperature, timeout=timeout, max_retries=0, max_tokens=4096)
+        # ChatAnthropic 은 max_tokens 가 필수 인자다. 값이 작으면 JSON 응답이 중간에 잘려
+        # 파싱이 실패한다(claude 계열에서 실측 — 추론 서술이 길다). 논문 3.2.1 의 통제 조건
+        # "max_tokens 는 답변이 잘리지 않는 충분히 큰 값으로 양쪽 동일하게 설정한다" 를
+        # 만족하도록 넉넉히 준다. google·openai 경로는 provider 기본값(충분히 큼)을 쓴다.
+        return ChatAnthropic(model=model, temperature=temperature, timeout=timeout,
+                             max_retries=0, max_tokens=16384)
     raise config.ConfigError(f"알 수 없는 provider: {provider} (logical_key={logical_key})")
 
 

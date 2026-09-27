@@ -51,11 +51,17 @@ def _route_after_verify(state):
     return END
 
 
-def build():
+def build(structure: str = "s7"):
+    """S7 그래프. `structure` 는 models.yaml 의 노드->모델 배정을 고르는 키다.
+
+    기본값 "s7" 은 기존 실험 C(gemini-2.5-flash 단일 모델)와 완전히 동일하다.
+    기반 모델 일반화(H6) 검정을 위한 변형(s7_gpt / s7_claude)과 상위 모델 검증기
+    실험(s7_vpro)은 그래프/프롬프트/채점기를 그대로 두고 모델 배정만 바꾼다.
+    """
     g = StateGraph(AgentState)
     g.add_node("retrieve", make_retrieve_node())
-    g.add_node("generate", make_generate_s7_node("s7", role="generate", node_name="generate"))
-    g.add_node("verify", make_verify_node("s7"))
+    g.add_node("generate", make_generate_s7_node(structure, role="generate", node_name="generate"))
+    g.add_node("verify", make_verify_node(structure))
     g.add_node("prep_retry", make_prep_retry_node())
 
     g.add_edge(START, "retrieve")

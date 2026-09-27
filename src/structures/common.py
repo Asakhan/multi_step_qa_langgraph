@@ -57,8 +57,45 @@ def _extract_json(text: str):
         try:
             return json.loads(frag)
         except Exception:
+            pass
+        try:
+            return json.loads(_escape_ctrl_in_strings(frag))
+        except Exception:
             return None
     return None
+
+
+def _escape_ctrl_in_strings(s: str) -> str:
+    """JSON 문자열 리터럴 안의 날 것의 제어문자(줄바꿈·탭)를 이스케이프한다.
+
+    표준 JSON 은 문자열 안에 날 것의 개행을 허용하지 않는데, 일부 모델(claude 계열에서 실측)은
+    critique/reasoning 처럼 긴 서술 필드를 여러 줄로 출력한다. 이 경우 값 자체는 온전하므로
+    구조를 바꾸지 않고 제어문자만 이스케이프해 되살린다. 문자열 밖의 개행·들여쓰기는 건드리지
+    않으므로 정상 JSON 의 해석 결과는 달라지지 않는다.
+    """
+    out = []
+    in_str = False
+    esc = False
+    for ch in s:
+        if in_str:
+            if esc:
+                out.append(ch); esc = False; continue
+            if ch == "\\":
+                out.append(ch); esc = True; continue
+            if ch == '"':
+                out.append(ch); in_str = False; continue
+            if ch == "\n":
+                out.append("\\n"); continue
+            if ch == "\r":
+                out.append("\\r"); continue
+            if ch == "\t":
+                out.append("\\t"); continue
+            out.append(ch)
+        else:
+            out.append(ch)
+            if ch == '"':
+                in_str = True
+    return "".join(out)
 
 
 # 저자 확정 프롬프트(common_rules)는 근거 부족 시 정확히 'INSUFFICIENT_EVIDENCE' 를

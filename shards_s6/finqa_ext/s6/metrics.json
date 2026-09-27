@@ -1,0 +1,44 @@
+{
+  "n_runs": 241,
+  "n_success": 166,
+  "TSR": 0.6887966804979253,
+  "avg_input_tokens": 8167.883817427386,
+  "avg_output_tokens": 2420.2655601659753,
+  "avg_total_tokens": 10588.149377593361,
+  "avg_latency": 8.934602588381091,
+  "total_cost_usd": 2.048748,
+  "avg_cost_usd": 0.008501029045643153,
+  "TPS": 15371.951807228916,
+  "cost_per_success_usd": 0.012341855421686745,
+  "by_dataset": {
+    "finqa_ext": {
+      "n_runs": 241,
+      "n_success": 166,
+      "TSR": 0.6887966804979253,
+      "avg_latency": 8.934602588381091,
+      "avg_tokens": 10588.149377593361,
+      "avg_cost": 0.008501029045643153
+    }
+  },
+  "by_task_type": {
+    "T3": {
+      "n_runs": 81,
+      "n_success": 67,
+      "TSR": 0.8271604938271605,
+      "avg_latency": 10.369715455555168,
+      "avg_tokens": 11165.308641975309,
+      "avg_cost": 0.009477624691358025
+    },
+    "T4": {
+      "n_runs": 160,
+      "n_success": 99,
+      "TSR": 0.61875,
+      "avg_latency": 8.208076699374214,
+      "avg_tokens": 10295.9625,
+      "avg_cost": 0.008006627499999999
+    }
+  },
+  "structure": "s6",
+  "n_error_runs": 0,
+  "n_judge_flagged": 20
+}
